@@ -30,7 +30,7 @@ if(nrow(invoice_toparse) > 0){
   write.table(x = checkfile,file = "~/Desktop/invoice/Invoice_master_table.tsv",append =F,quote = F,sep = "\t",row.names = F)
 }
 
-#parse_invoice(invoiceFile = as.vector(invoice.df$invoicePath[7]),invoiceFname =as.vector(invoice.df$invoiceFilename[2]))
+parse_invoice(invoiceFile = as.vector(invoice.df$invoicePath[3]),invoiceFname =as.vector(invoice.df$invoiceFilename[3]))
 
 
 
@@ -58,12 +58,26 @@ parse_invoice<-function(invoiceFile,invoiceFname){
   PSP.Element<-f[grep("PSP-Element:",x = f[,"NA."]),"NA..5"]
   rechnung<- paste(f[grep("^Rechnung$",x = f[,"NA."]),c("NA..19","NA..22","NA..31")],collapse = "/")
   Rech.NR<- f[grep("^Rechnung$",x = f[,"NA."]),"NA..31"]
+  
   Brutto<- as.numeric(f[grep("Bruttobetrag",x= f[,"NA..22"]),"NA..29"])
+  Brutto_index<-grep("Bruttobetrag",x= f[,"NA..22"])
   Betrag=NA
+  vat =0
+  Nettobetrag=0
   if(length(Brutto) == 0){
-    Brutto<-NA
-    Betrag<- as.numeric(f[grep("Betrag",x= f[,"NA..23"]),"NA..29"])
+    Brutto= NA
+    Betrag= as.numeric(f[grep("Betrag",x= f[,"NA..23"]),"NA..29"])
+    betrag_index= grep("Betrag",x= f[,"NA..23"])[1]
+    netto_index=betrag_index
+  }else{
+    Nettobetrag=  as.numeric(f[grep("Nettobetrag",x= f[,"NA..22"]),"NA..29"])
+    netto_index= grep("Nettobetrag",x= f[,"NA..22"])[1]
+    vat= as.numeric(f[grep(pattern = "%",f[,"NA..22"]),"NA..29"])
+    vat_index= grep(pattern = "%",f[,"NA..22"])[1]
   }
+  
+  
+  
   Address <- as.vector(f$NA.[c(20:28)])
   Address<-paste(x=Address[!is.na(Address)],collapse = " ; ")
   
@@ -79,32 +93,100 @@ parse_invoice<-function(invoiceFile,invoiceFname){
   year <- as.numeric(gsub(pattern = " ",replacement = "",paste(f[grep("^Rechnung$",x = f[,"NA."]),c("NA..19")],collapse = "/")))
   
   seq_cost<-grep(pattern = "sequencing|Sequencing",f$NA..1,perl = T,value = T)
+  project_mgmt_index= check_empty_betragcolum(indexes = grep(pattern = "Project|project|management|Management",f$NA..1,perl = T),table = f)
+  Bio_cost<-grep(pattern ="Bioinformatics|differential|analysis",f$NA..1,perl = T)[1]
+  
   if(length(seq_cost) > 0){
-    seq_cost_in<-grep(pattern = "sequencing|Sequencing",f$NA..1,perl = T)[1] # get sequncing section start index
-    Bio_cost<-grep(pattern = "Bioinformatics",f$NA..1,perl = T)[1]
-    if(length(Bio_cost) > 0){ # if bioinformatics section is in the invoice 
-      seq_cost_end<-grep(pattern = "Bioinformatics",f$NA..1,perl = T)[1] -1 # get the Bioinfo section index
+    seq_cost_in<-grep(pattern = "sequencing|Sequencing",f$NA..1,perl = T)[1]# get sequncing section start index
+    
+    if(length(project_mgmt_index) > 0){ # if project management section is in the invoice 
+      seq_cost_end<-project_mgmt_index -1 # sequencing section ends
+    }else if (length(project_mgmt_index) == 0 && length(Bio_cost) > 0){ ## if management cost is not there but bioinfo cost is there
+      seq_cost_end=Bio_cost-1
     }else{ # if no bioinfo section is not included
-      seq_cost_end<- seq_cost_in + 4
+      seq_cost_end<-  netto_index -1
     }
+    ## estiamte ngs cost
+    ngs_only_cost<-ifelse(length(seq_cost) > 0,
+                          sum(f[c(seq_cost_in:seq_cost_end),"NA..29"],na.rm = T),
+                          0)
+  }else{
+    ngs_only_cost=0
   }
   
-  if(length(seq_cost) > 0){
-    ngs_cost<-f[c(seq_cost_in:seq_cost_end),"NA..29"]
-    ngs_datamgt_cost<-sum(ngs_cost[!is.na(ngs_cost )])
-  }else{
-    ngs_datamgt_cost<- 0
-  }
   
-  if(Brutto %in% NA){
-    Bioinfo_cost<- Betrag - ngs_datamgt_cost
+  
+  mgmt_cost<-ifelse(length(project_mgmt_index) > 0, 
+                    sum(f[project_mgmt_index,"NA..29"],na.rm = T), 
+                    0)
+  
+  
+  Bioinfo_cost<-ifelse(length(Bio_cost) >0, 
+                       sum(f[c(Bio_cost :(netto_index -1)),"NA..29"],na.rm = T),
+                       0)
+  
+  ### if nettobetrag is present
+  if(is.na(Betrag)){
+    ### check total Betrag == Bioinfo_cost + ngs_only_cost +mgmt_cost
+    amount_df<- total_sanity_check(Nettobetrag,Bioinfo_cost ,ngs_only_cost ,mgmt_cost)
   }else{
-    Bioinfo_cost<- Brutto - ngs_datamgt_cost
+    amount_df<- total_sanity_check(Betrag,Bioinfo_cost ,ngs_only_cost ,mgmt_cost)
   }
+  Bioinfo_cost<-amount_df[amount_df$Terms%in% "Bioinfo_cost","cost_list"]
+  ngs_only_cost<-amount_df[amount_df$Terms%in% "ngs_only_cost","cost_list"]
+  mgmt_cost<-amount_df[amount_df$Terms%in% "mgmt_cost","cost_list"]
+  
+  
+
   
   invoice_table<-data.frame(Rech.NR=Rech.NR,rechnung=rechnung,kostenstelle=kostenstelle,fonds=Fonds,
                             psp.Element=PSP.Element,date=date,bruttoBetrag=Brutto,betrag=Betrag,
-                            NGS_dataMgmtcost=ngs_datamgt_cost,Bioinfo_cost=Bioinfo_cost,year=year,
-                            file=invoiceFname, Address=Address,Offer=offer)
+                            NGS_cost=ngs_only_cost,Bioinfo_cost=Bioinfo_cost,project_mgmt=mgmt_cost,
+                            year=year,vat=vat,nettobetrag=Nettobetrag,file=invoiceFname, Address=Address,Offer=offer)
   return(invoice_table)
 }
+
+
+check_empty_betragcolum<- function(table,indexes){
+  # check all index and return first index with betrag's value with some value.  
+  returnindex=indexes
+  for( k in 1:length(indexes)){
+    returnindex[k]<-ifelse(is.na(table[indexes[k],"NA..29"]),FALSE,TRUE)
+  }
+  return(indexes[which(returnindex==TRUE)][1])
+}
+
+###  check if the total amount and sum of all section cost  are equal
+### only handles if  total amount less than sum of all section
+### have to include if betrag is greater than
+total_sanity_check<-function(Betrag, Bioinfo_cost, ngs_only_cost,mgmt_cost){
+  unequal=0
+  
+  cost_list= c(Bioinfo_cost,ngs_only_cost,mgmt_cost)
+  cost_df<-data.frame(cost_list=cost_list,Terms=c("Bioinfo_cost","ngs_only_cost","mgmt_cost"))
+  #cost_list1<-cost_list[cost_list !=0]
+  if(!Betrag == sum(cost_list)){
+    # total  is greater or lesser th
+    unequal= ifelse(Betrag > sum(cost_list), "greater","less")
+    gz<-data.frame(t(combn(cost_list,2)))
+    if(unequal %in% "less"){
+      gz$combn_score =rowSums(gz)
+      gz1<-gz[gz$combn_score > Betrag,]
+      gz2<-gz[gz$combn_score == Betrag,]
+      
+      common<-intersect(unname(unlist(gz1[,c(1,2)])),unname(unlist(gz2[,c(1,2)])))
+      
+      gz3<-unname(unlist(gz1[,c(1,2)]))
+      
+      cost_df[cost_df$cost_list == common,"cost_list"]<- common- gz3[gz3!= common]
+      
+    }
+  }
+  
+  return(cost_df)
+  
+}
+
+
+
+
