@@ -1,4 +1,5 @@
 require("xlsx")
+require("docstring")
 
 invoicelist<-list.files(path = "~/Desktop/invoice",pattern = "*.xls",all.files = T,full.names = T,recursive = T)
 invocefilename<-list.files(path = "~/Desktop/invoice",pattern = "*.xls",all.files = T,full.names = F,recursive = T)
@@ -37,6 +38,13 @@ parse_invoice(invoiceFile = as.vector(invoice.df$invoicePath[3]),invoiceFname =a
 
 
 parse_invoice<-function(invoiceFile,invoiceFname){
+  #' Parse xls files (invoice)
+  #' 
+  #' Function to parse the invoice xls files to extract information for reports
+  #' @param invoiceFile Invoice file in xls format (qbic format xls files)
+  #' @param invoiceFname Filename as string
+  #' @return Data frame with extracted infos.
+  #' @note This is a custom designed function and will not work with general xls files.
   
   f<-read.xlsx(invoiceFile,sheetIndex = 1)
   
@@ -148,7 +156,7 @@ parse_invoice<-function(invoiceFile,invoiceFname){
 
 
 check_empty_betragcolum<- function(table,indexes){
-  # check all index and return first index with betrag's value with some value.  
+  #' check all index and return first index with betrag's field with some value.  
   returnindex=indexes
   for( k in 1:length(indexes)){
     returnindex[k]<-ifelse(is.na(table[indexes[k],"NA..29"]),FALSE,TRUE)
@@ -160,6 +168,15 @@ check_empty_betragcolum<- function(table,indexes){
 ### only handles if  total amount less than sum of all section
 ### have to include if betrag is greater than
 total_sanity_check<-function(Betrag, Bioinfo_cost, ngs_only_cost,mgmt_cost){
+  #' (internal function) Function to check if the amounts are matching 
+  #' 
+  #' check if the total amount and sum of all section cost  are equal and only handles if  total amount less than sum of all section. 
+  #' @param Betrag total amount in the invoice
+  #' @param Bioinfo_cost bioinformatics cost estimated from parsing the invoice
+  #' @param ngs_only_cost sequencing cost
+  #' @param mgmt_cost project management cost
+  #' @section Updates needed:
+  #'  This function needs to be updated for cases "betrag is greater than sum of sections"
   unequal=0
   
   cost_list= c(Bioinfo_cost,ngs_only_cost,mgmt_cost)
